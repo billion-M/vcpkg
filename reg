@@ -1,0 +1,151 @@
+#include <iostream>
+#include <vector>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/calib3d.hpp>
+
+#define CLOSE_1_PATH "2019-08-14_2019-08-17-pictures//2019-08-16-09-36-57_.jpg"
+#define CLOSE_2_PATH "2019-08-14_2019-08-17-pictures//2019-08-16-09-51-04_.jpg"
+#define CLOSE_3_PATH "2019-08-14_2019-08-17-pictures//2019-08-16-09-59-01_.jpg"
+#define CLOSE_4_PATH "2019-08-14_2019-08-17-pictures//2019-08-16-10-01-01_.jpg"
+
+#define OPEN_1_PATH "2019-08-14_2019-08-17-pictures//2019-08-16-12-26-45_.jpg"
+#define OPEN_2_PATH "2019-08-14_2019-08-17-pictures//2019-08-16-12-28-46_.jpg"
+#define OPEN_3_PATH "2019-08-14_2019-08-17-pictures//2019-08-16-12-30-46_.jpg"
+#define OPEN_4_PATH "2019-08-14_2019-08-17-pictures//2019-08-16-12-34-47_.jpg"
+
+using namespace std;
+using namespace cv;
+
+//计算并返回图像的频谱
+Mat calDftMag(Mat inputImg)
+{
+    //得到DFT的最佳尺寸（2的指数），以加速计算
+    Mat paddedImg;
+    int m = getOptimalDFTSize(inputImg.rows);
+    int n = getOptimalDFTSize(inputImg.cols);
+
+    cout << "图片原始尺寸为：" << inputImg.cols << "*" << inputImg.rows <<endl;
+    cout << "DFT最佳尺寸为：" << n << "*" << m <<endl;
+
+    //填充图像的下端和右端
+    copyMakeBorder(inputImg, paddedImg, 0, m - inputImg.rows,
+                   0, n - inputImg.cols, BORDER_CONSTANT, Scalar::all(0));
+
+    //将填充的图像组成一个复数的二维数组（两个通道的Mat），用于DFT
+    Mat matArray[] = {Mat_<float>(paddedImg), Mat::zeros(paddedImg.size(), CV_32F)};
+    Mat complexInput, complexOutput;
+    merge(matArray, 2, complexInput);
+
+    dft(complexInput, complexOutput);
+
+    //计算幅度谱（傅里叶谱）
+    split(complexOutput, matArray);
+    Mat magImg;
+    magnitude(matArray[0], matArray[1], magImg);
+
+    //转换到对数坐标
+    magImg += Scalar::all(1);
+    log(magImg, magImg);
+
+    //将频谱图像裁剪成偶数并将低频部分放到图像中心
+    int width = (magImg.cols / 2)*2;
+    int height = (magImg.rows / 2)*2;
+
+
+    magImg = magImg(Rect(0, 0, width, height));
+
+    int colToCut = magImg.cols/2;
+    int rowToCut = magImg.rows/2;
+
+    //获取图像，分别为左上右上左下右下
+    //注意这种方式得到的是magImg的ROI的引用
+    //对下面四幅图像进行修改就是直接对magImg进行了修改
+    Mat topLeftImg(magImg, Rect(0, 0, colToCut, rowToCut));
+    Mat topRightImg(magImg, Rect(colToCut, 0, colToCut, rowToCut));
+    Mat bottomLeftImg(magImg, Rect(0, rowToCut, colToCut, rowToCut));
+    Mat bottomRightImg(magImg, Rect(colToCut, rowToCut, colToCut, rowToCut));
+
+    //第二象限和第四象限进行交换
+    Mat tmpImg;
+    topLeftImg.copyTo(tmpImg);
+    bottomRightImg.copyTo(topLeftImg);
+    tmpImg.copyTo(bottomRightImg);
+
+    //第一象限和第三象限进行交换
+    bottomLeftImg.copyTo(tmpImg);
+    topRightImg.copyTo(bottomLeftImg);
+    tmpImg.copyTo(topRightImg);
+
+    //归一化图像
+    normalize(magImg, magImg, 0, 1, CV_MINMAX);
+
+    static int count = 1;
+    String in = "输入图像";
+    String ou = "频谱图像";
+    in += to_string(count);
+    ou += to_string(count);
+    count++;
+    imshow(in, inputImg);
+    imshow(ou, magImg);
+
+    return magImg;
+}
+
+int main()
+{
+    Mat closeImg = imread(CLOSE_1_PATH, IMREAD_GRAYSCALE);
+    Mat openImg = imread(OPEN_4_PATH, IMREAD_GRAYSCALE);
+
+    //resize(inputImg,inputImg,Size(inputImg.cols/8, inputImg.rows/8));
+
+    closeImg = closeImg(Rect(closeImg.cols/2, 0, closeImg.cols/2, closeImg.rows));
+    openImg = openImg(Rect(openImg.cols/2, 0, openImg.cols/2, openImg.rows));
+
+    if(closeImg.empty() || openImg.empty())
+    {
+        cout << "图片没读到，傻逼！" << endl;
+        return -1;
+    }
+
+    Mat closeMag = calDftMag(closeImg);
+    Mat openMag = calDftMag(openImg);
+
+    cout << closeMag.type() << endl;
+    cout << openMag.type() << endl;
+    cout << closeMag.size() << endl;
+    cout << openMag.size() << endl;
+
+//    Mat tmpMag = openMag.clone();
+//    for(int i=0;i<closeMag.rows;i++)
+//    {
+//        for(int j=0;j<closeMag.cols;j++)
+//        {
+//            if(closeMag.at<schar>(i,j) == 0)
+//            {
+//                tmpMag.at<float>(i,j)= 1;
+//            }
+//            else
+//            {
+//                tmpMag.at<float>(i,j)= 0;
+//            }
+//        }
+//    }
+
+//    imshow("tmpMag",tmpMag);
+
+
+
+    Mat diffMag = Mat::zeros(closeMag.rows, closeMag.cols, closeMag.type());
+    absdiff(closeMag, openMag, diffMag);
+
+    normalize(diffMag, diffMag, 0, 1, CV_MINMAX);
+
+    imshow("diffMag",diffMag);
+
+    waitKey();
+
+    return 0;
+}
